@@ -1,0 +1,52 @@
+# 舆情监控平台依赖包
+
+# Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+jinja2==3.1.2
+python-multipart==0.0.6
+
+# 数据库
+pymongo==4.6.0
+motor==3.3.2
+
+# HTTP请求
+requests==2.31.0
+aiohttp==3.9.1
+httpx==0.25.2
+
+# 数据处理
+pandas==2.1.4
+numpy==1.24.4
+
+# 任务调度
+apscheduler==3.10.4
+celery==5.3.4
+redis==5.0.1
+
+# 配置管理
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# 日志
+loguru==0.7.2
+
+# 时间处理
+python-dateutil==2.8.2
+pytz==2023.3
+
+# 数据验证
+validators==0.22.0
+
+# 异步支持
+asyncio==3.4.3
+
+# 系统监控
+psutil==5.9.6
+
+# 开发工具
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+flake8==6.1.0

@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>舆情监控平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        .sidebar {
+            min-height: 100vh;
+            background-color: #f8f9fa;
+        }
+        .data-card {
+            transition: transform 0.2s;
+        }
+        .data-card:hover {
+            transform: translateY(-2px);
+        }
+        .source-badge {
+            font-size: 0.75rem;
+        }
+        .priority-1 { border-left: 4px solid #dc3545; }
+        .priority-2 { border-left: 4px solid #ffc107; }
+        .priority-3 { border-left: 4px solid #28a745; }
+        .loading {
+            display: none;
+        }
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .category-finance { background-color: #e3f2fd; }
+        .category-tech { background-color: #f3e5f5; }
+        .category-news { background-color: #e8f5e8; }
+        .category-social { background-color: #fff3e0; }
+        .category-entertainment { background-color: #fce4ec; }
+        .category-sports { background-color: #e0f2f1; }
+
+        .status-card {
+            border-left: 4px solid #28a745;
+            transition: all 0.3s ease;
+        }
+        .status-card.offline {
+            border-left-color: #dc3545;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-online { background-color: #28a745; }
+        .status-offline { background-color: #dc3545; }
+        .status-warning { background-color: #ffc107; }
+
+        .metric-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            border-radius: 15px;
+        }
+        .metric-card.blue {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        .metric-card.green {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        }
+        .metric-card.orange {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+
+        .keyword-tag {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .keyword-tag:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+
+        .nav-tabs .nav-link {
+            border-radius: 10px 10px 0 0;
+        }
+        .nav-tabs .nav-link.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: transparent;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- 侧边栏 -->
+            <div class="col-md-3 col-lg-2 sidebar p-3">
+                <h5 class="mb-4">
+                    <i class="bi bi-graph-up"></i>
+                    舆情监控
+                </h5>
+
+                <!-- 系统状态监控 -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-activity"></i>
+                            系统状态
+                        </h6>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="status-item mb-2">
+                            <span class="status-indicator status-online" id="api-status"></span>
+                            <small>API服务</small>
+                        </div>
+                        <div class="status-item mb-2">
+                            <span class="status-indicator status-online" id="db-status"></span>
+                            <small>数据库</small>
+                        </div>
+                        <div class="status-item mb-2">
+                            <span class="status-indicator status-online" id="scheduler-status"></span>
+                            <small>调度器</small>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-indicator status-online" id="collector-status"></span>
+                            <small>采集器</small>
+                        </div>
+                        <hr class="my-2">
+                        <small class="text-muted">
+                            <i class="bi bi-clock"></i>
+                            运行时间: <span id="uptime">-</span>
+                        </small>
+                    </div>
+                </div>
+
+                <!-- 数据概览 -->
+                <div class="card stats-card mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">
+                            <i class="bi bi-bar-chart"></i>
+                            数据概览
+                        </h6>
+                        <div id="stats-content">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>数据源:</span>
+                                <span id="source-count">55</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>总条目:</span>
+                                <span id="total-count">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>今日新增:</span>
+                                <span id="today-count">-</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>成功率:</span>
+                                <span id="success-rate">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 数据源分类 -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-collection"></i>
+                            数据源分类
+                        </h6>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="list-group list-group-flush" id="category-list">
+                            <!-- 动态加载 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 控制面板 -->
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-gear"></i>
+                            控制面板
+                        </h6>
+                    </div>
+                    <div class="card-body p-2">
+                        <button class="btn btn-primary btn-sm w-100 mb-2" onclick="refreshData()">
+                            <i class="bi bi-arrow-clockwise"></i>
+                            刷新数据
+                        </button>
+                        <button class="btn btn-success btn-sm w-100 mb-2" onclick="triggerCollection()">
+                            <i class="bi bi-download"></i>
+                            手动采集
+                        </button>
+                        <button class="btn btn-info btn-sm w-100" onclick="showSchedulerStatus()">
+                            <i class="bi bi-clock"></i>
+                            调度状态
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 主内容区 -->
+            <div class="col-md-9 col-lg-10 p-4">
+                <!-- 功能导航标签 -->
+                <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
+                            <i class="bi bi-speedometer2"></i> 数据概览
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="keywords-tab" data-bs-toggle="tab" data-bs-target="#keywords" type="button" role="tab">
+                            <i class="bi bi-tags"></i> 关键词分析
+                        </button>
+                    </li>
+
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="charts-tab" data-bs-toggle="tab" data-bs-target="#charts" type="button" role="tab">
+                            <i class="bi bi-graph-up"></i> 数据可视化
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- 标签页内容 -->
+                <div class="tab-content" id="mainTabContent">
+                    <!-- 数据概览标签页 -->
+                    <div class="tab-pane fade show active" id="overview" role="tabpanel">
+                        <!-- 指标卡片 -->
+                        <div class="row mb-4">
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-collection display-4 mb-2"></i>
+                                        <h3 id="metric-sources">55</h3>
+                                        <p class="mb-0">数据源数量</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card blue">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-file-text display-4 mb-2"></i>
+                                        <h3 id="metric-news">-</h3>
+                                        <p class="mb-0">新闻条目</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card green">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-check-circle display-4 mb-2"></i>
+                                        <h3 id="metric-success">-</h3>
+                                        <p class="mb-0">采集成功率</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card orange">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-files display-4 mb-2"></i>
+                                        <h3 id="metric-docs">-</h3>
+                                        <p class="mb-0">文档数量</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-tags display-4 mb-2"></i>
+                                        <h3 id="metric-keywords">-</h3>
+                                        <p class="mb-0">关键词数量</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6 mb-3">
+                                <div class="card metric-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-calendar-day display-4 mb-2"></i>
+                                        <h3 id="metric-today">-</h3>
+                                        <p class="mb-0">今日新增</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 新闻看板 -->
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-newspaper"></i>
+                                    新闻中心
+                                </h5>
+                                <button class="btn btn-sm btn-outline-primary" onclick="monitor.refreshOverview()">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                            <div class="card-body text-center">
+                                <div class="py-4">
+                                    <i class="bi bi-newspaper display-1 text-muted mb-3"></i>
+                                    <h4 class="text-muted mb-3">新闻数据中心</h4>
+                                    <p class="text-muted mb-4">
+                                        实时监控全网新闻动态，提供智能分析和检索功能
+                                    </p>
+                                    <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                                        <button class="btn btn-primary btn-lg me-md-2" onclick="monitor.showAllNews()">
+                                            <i class="bi bi-list-ul"></i>
+                                            浏览全部新闻
+                                        </button>
+                                        <button class="btn btn-outline-secondary btn-lg" onclick="monitor.showNewsSearch()">
+                                            <i class="bi bi-search"></i>
+                                            智能检索
+                                        </button>
+                                    </div>
+
+                                    <div class="row mt-4">
+                                        <div class="col-md-4">
+                                            <div class="text-center">
+                                                <h5 class="text-primary" id="dashboard-total-news">-</h5>
+                                                <small class="text-muted">总新闻数</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="text-center">
+                                                <h5 class="text-success" id="dashboard-today-news">-</h5>
+                                                <small class="text-muted">今日新增</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="text-center">
+                                                <h5 class="text-info" id="dashboard-sources">-</h5>
+                                                <small class="text-muted">数据源</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                
+                    <!-- 关键词分析标签页 -->
+                    <div class="tab-pane fade" id="keywords" role="tabpanel">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-tags"></i>
+                                            热门关键词排行
+                                        </h5>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadKeywords(1)">今日</button>
+                                            <button class="btn btn-outline-secondary active" onclick="monitor.loadKeywords(7)">7天</button>
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadKeywords(30)">30天</button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="keywords-cloud">
+                                            <!-- 关键词云 -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">
+                                            <i class="bi bi-bar-chart"></i>
+                                            词汇统计
+                                        </h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>总词汇数:</span>
+                                            <span id="total-words">-</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>唯一词汇:</span>
+                                            <span id="unique-words">-</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <span>更新时间:</span>
+                                            <span id="keywords-updated">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card mt-3">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">
+                                            <i class="bi bi-list-ol"></i>
+                                            热词排行榜
+                                        </h6>
+                                    </div>
+                                    <div class="card-body p-2">
+                                        <div id="keywords-ranking">
+                                            <!-- 排行榜 -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 清洗规则管理 -->
+                                <div class="card mt-3">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">
+                                            <i class="bi bi-funnel"></i>
+                                            清洗规则管理
+                                        </h6>
+                                        <button class="btn btn-sm btn-primary" onclick="monitor.showAddRuleModal()">
+                                            <i class="bi bi-plus"></i>
+                                        </button>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="mb-3">
+                                            <label class="form-label small">过滤类型:</label>
+                                            <select class="form-select form-select-sm" id="filter-type" onchange="monitor.loadFilterRules()">
+                                                <option value="blacklist">黑名单</option>
+                                                <option value="whitelist">白名单</option>
+                                                <option value="length">长度过滤</option>
+                                                <option value="regex">正则表达式</option>
+                                            </select>
+                                        </div>
+                                        <div id="filter-rules-list" style="max-height: 200px; overflow-y: auto;">
+                                            <!-- 动态加载过滤规则 -->
+                                        </div>
+                                        <div class="mt-2">
+                                            <button class="btn btn-sm btn-success w-100" onclick="monitor.applyFilterRules()">
+                                                <i class="bi bi-check-circle"></i>
+                                                应用规则
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-info w-100 mt-1" onclick="monitor.testFilterRules()">
+                                                <i class="bi bi-bug"></i>
+                                                测试过滤
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- 数据可视化标签页 -->
+                    <div class="tab-pane fade" id="charts" role="tabpanel">
+                        <div class="row">
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-graph-up"></i>
+                                            7天数据采集趋势
+                                        </h5>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary active" onclick="monitor.loadTrendChart('7d')">7天</button>
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadTrendChart('30d')">30天</button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="chart-container">
+                                            <canvas id="trendChart"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-pie-chart"></i>
+                                            数据源分布
+                                        </h5>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary active" onclick="monitor.loadSourceChart('category')">分类</button>
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadSourceChart('top10')">TOP10</button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="chart-container">
+                                            <canvas id="sourceChart"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-bar-chart"></i>
+                                            实时采集监控
+                                        </h5>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="monitor.refreshCharts()">
+                                            <i class="bi bi-arrow-clockwise"></i>
+                                            刷新
+                                        </button>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="chart-container">
+                                            <canvas id="realtimeChart"></canvas>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 详细信息模态框 -->
+    <div class="modal fade" id="detailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">新闻详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="modal-content">
+                    <!-- 动态内容 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- 全部新闻模态框 -->
+    <div class="modal fade" id="allNewsModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-newspaper"></i>
+                        全部新闻
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 搜索栏 -->
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="modal-search-input"
+                                       placeholder="输入关键词搜索新闻标题、内容..."
+                                       onkeypress="if(event.key==='Enter') monitor.searchInModal()">
+                                <button class="btn btn-primary" onclick="monitor.searchInModal()">
+                                    搜索
+                                </button>
+                                <button class="btn btn-outline-secondary" onclick="monitor.clearSearch()">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <select class="form-select" id="modal-category-filter" onchange="monitor.filterInModal()">
+                                <option value="">所有分类</option>
+                                <option value="finance">金融</option>
+                                <option value="tech">科技</option>
+                                <option value="news">新闻</option>
+                                <option value="social">社交</option>
+                                <option value="entertainment">娱乐</option>
+                                <option value="sports">体育</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 新闻列表 -->
+                    <div id="modal-news-list">
+                        <!-- 动态加载新闻列表 -->
+                    </div>
+
+                    <!-- 分页 -->
+                    <nav aria-label="新闻分页" class="mt-3">
+                        <ul class="pagination justify-content-center" id="modal-pagination">
+                            <!-- 动态生成分页 -->
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加清洗规则模态框 -->
+    <div class="modal fade" id="addRuleModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-plus-circle"></i>
+                        添加清洗规则
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="add-rule-form">
+                        <div class="mb-3">
+                            <label class="form-label">规则类型</label>
+                            <select class="form-select" id="rule-type" onchange="monitor.onRuleTypeChange()">
+                                <option value="blacklist">黑名单 - 排除指定关键词</option>
+                                <option value="whitelist">白名单 - 只保留指定关键词</option>
+                                <option value="length">长度过滤 - 按字符长度过滤</option>
+                                <option value="regex">正则表达式 - 自定义匹配规则</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3" id="rule-value-group">
+                            <label class="form-label" id="rule-value-label">关键词</label>
+                            <input type="text" class="form-control" id="rule-value" placeholder="请输入关键词">
+                            <div class="form-text" id="rule-value-help">多个关键词请用逗号分隔</div>
+                        </div>
+
+                        <div class="mb-3" id="length-config" style="display: none;">
+                            <div class="row">
+                                <div class="col-6">
+                                    <label class="form-label">最小长度</label>
+                                    <input type="number" class="form-control" id="min-length" value="2" min="1">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label">最大长度</label>
+                                    <input type="number" class="form-control" id="max-length" value="10" min="1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">规则描述</label>
+                            <input type="text" class="form-control" id="rule-description" placeholder="可选：描述此规则的用途">
+                        </div>
+
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="rule-enabled" checked>
+                            <label class="form-check-label" for="rule-enabled">
+                                启用此规则
+                            </label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="monitor.saveFilterRule()">保存规则</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
