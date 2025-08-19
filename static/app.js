@@ -19,43 +19,96 @@ class SentimentMonitor {
             length: { min: 2, max: 10 },
             regex: []
         };
+        this.loadedModules = {
+            overview: false,
+            keywords: false,
+            alerts: false,
+            charts: false
+        };
         this.init();
     }
 
     async init() {
+        console.log('🚀 初始化舆情监控平台...');
+
+        // 1. 加载概览模块
         await this.loadSystemStatus();
         await this.loadStatistics();
         await this.loadCategories();
         await this.loadNewsDashboard();
 
-        // 先初始化清洗规则，再加载关键词
+        // 2. 加载关键词分析模块
         this.loadFilterRules();
         await this.loadKeywords();
 
+        // 3. 预加载预警管理模块
+        console.log('🚨 预加载预警管理模块...');
+        await this.loadAlertRules();
+        await this.loadAlerts('');
+        this.loadedModules.alerts = true;
+
+        // 4. 初始化图表和事件监听
         await this.initCharts();
+        this.loadedModules.charts = true;
         this.setupEventListeners();
         this.startAutoRefresh();
+
+        // 标记所有模块已加载
+        this.loadedModules.overview = true;
+        this.loadedModules.keywords = true;
+
+        console.log('✅ 所有模块初始化完成', this.loadedModules);
     }
 
     setupEventListeners() {
         // 标签页切换事件
-        document.querySelectorAll('#mainTabs button[data-bs-toggle="tab"]').forEach(tab => {
+        const tabs = document.querySelectorAll('#mainTabs button[data-bs-toggle="tab"]');
+        console.log(`🔧 设置事件监听器，找到 ${tabs.length} 个标签页`);
+
+        tabs.forEach(tab => {
+            console.log(`🔧 为标签页添加事件监听: ${tab.getAttribute('data-bs-target')}`);
             tab.addEventListener('shown.bs.tab', (e) => {
                 const target = e.target.getAttribute('data-bs-target');
+                console.log(`🔄 标签页切换事件触发: ${target}`);
                 this.onTabSwitch(target);
             });
         });
     }
 
     async onTabSwitch(target) {
+        console.log(`🔄 切换到标签页: ${target}`);
+
         switch(target) {
             case '#overview':
                 this.refreshOverview();
                 break;
             case '#keywords':
-                // 先加载规则，再加载关键词
-                this.loadFilterRules();
-                await this.loadKeywords();
+                // 检查是否需要重新加载
+                const keywordsContainer = document.getElementById('keywords-list');
+                if (!keywordsContainer || keywordsContainer.children.length === 0) {
+                    this.loadFilterRules();
+                    await this.loadKeywords();
+                } else {
+                    console.log('📋 关键词数据已存在，跳过重新加载');
+                }
+                break;
+            case '#alerts':
+                // 检查是否需要重新加载
+                const alertsContainer = document.getElementById('alerts-list');
+                const rulesContainer = document.getElementById('alert-rules-list');
+
+                if (!alertsContainer || !rulesContainer ||
+                    alertsContainer.children.length === 0 || rulesContainer.children.length === 0) {
+                    console.log('🔄 预警数据不完整，重新加载...');
+                    this.showAlertsLoading(true, '正在刷新预警数据...');
+
+                    await this.loadAlertRules();
+                    await this.loadAlerts('');
+
+                    this.showAlertsLoading(false);
+                } else {
+                    console.log('🚨 预警数据已存在，跳过重新加载');
+                }
                 break;
             case '#charts':
                 this.refreshCharts();
@@ -1377,7 +1430,7 @@ class SentimentMonitor {
                         <input class="form-check-input" type="checkbox" ${rule.enabled ? 'checked' : ''}
                                onchange="monitor.toggleRule('${rule.id}', this.checked)">
                     </div>
-                    <button class="btn btn-sm btn-outline-danger" onclick="monitor.deleteRule('${rule.id}')">
+                    <button class="btn btn-sm btn-outline-danger" onclick="monitor.deleteRule('${rule.id}')" title="删除规则" aria-label="删除规则">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
@@ -1541,6 +1594,517 @@ class SentimentMonitor {
         });
 
         return filteredKeywords;
+    }
+
+    // ==================== 预警管理功能 ====================
+
+    async loadAlerts(status = 'active') {
+        console.log(`🚨 [步骤2] 开始加载预警列表 (状态: ${status})...`);
+
+        try {
+            const url = status ? `/api/alerts?status=${status}` : '/api/alerts';
+            const response = await fetch(url);
+            const result = await response.json();
+
+            if (result.success) {
+                this.displayAlerts(result.alerts);
+                this.updateAlertsStats(result.alerts);
+
+                // 更新按钮状态
+                document.querySelectorAll('#alerts .btn-group button').forEach(btn => {
+                    btn.classList.remove('active');
+                    if ((status === 'active' && btn.textContent.includes('活跃')) ||
+                        (status === 'resolved' && btn.textContent.includes('已解决')) ||
+                        (status === '' && btn.textContent.includes('全部'))) {
+                        btn.classList.add('active');
+                    }
+                });
+
+                console.log(`🔄 更新按钮状态: ${status || '全部'}`);
+
+                console.log(`✅ [步骤2] 预警列表加载完成: ${result.alerts.length}个预警`);
+            } else {
+                this.showError('加载预警列表失败');
+            }
+
+        } catch (error) {
+            console.error('加载预警列表失败:', error);
+            this.showError('加载预警列表失败');
+        }
+    }
+
+    displayAlerts(alerts) {
+        const container = document.getElementById('alerts-list');
+
+        if (alerts.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted py-4">暂无预警</div>';
+            return;
+        }
+
+        container.innerHTML = alerts.map(alert => `
+            <div class="alert alert-${this.getAlertBootstrapLevel(alert.level)} alert-dismissible mb-3">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <h6 class="alert-heading mb-1">
+                            <i class="bi bi-${this.getAlertIcon(alert.level)}"></i>
+                            ${alert.title}
+                        </h6>
+                        <p class="mb-1">${alert.message}</p>
+                        <small class="text-muted">
+                            <i class="bi bi-clock"></i>
+                            ${new Date(alert.triggered_at).toLocaleString('zh-CN')}
+                            ${alert.data?.last_updated && alert.data.last_updated !== alert.triggered_at ?
+                                ` | 最后更新: ${new Date(alert.data.last_updated).toLocaleString('zh-CN')}` : ''}
+                            ${alert.resolved_at ? ` | 已解决于 ${new Date(alert.resolved_at).toLocaleString('zh-CN')}` : ''}
+                        </small>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        ${(alert.data?.reactivation_count || 0) > 0 ?
+                            `<span class="badge bg-warning text-dark me-1" title="已重新激活 ${alert.data.reactivation_count} 次">
+                                <i class="bi bi-arrow-repeat"></i> ${alert.data.reactivation_count}
+                            </span>` : ''}
+                        <span class="badge bg-${this.getAlertBootstrapLevel(alert.level)} me-2">${this.getAlertLevelText(alert.level)}</span>
+                        <button class="btn btn-sm btn-outline-info me-1" onclick="monitor.showAlertNews('${alert.id}')" title="查看相关新闻" aria-label="查看相关新闻">
+                            <i class="bi bi-newspaper"></i>
+                        </button>
+                        ${alert.status === 'active' ? `
+                            <button class="btn btn-sm btn-outline-success" onclick="monitor.resolveAlert('${alert.id}')" title="解决预警" aria-label="解决预警">
+                                <i class="bi bi-check"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    getAlertBootstrapLevel(level) {
+        const levelMap = {
+            'low': 'info',
+            'medium': 'warning',
+            'high': 'danger',
+            'critical': 'danger'
+        };
+        return levelMap[level] || 'info';
+    }
+
+    getAlertIcon(level) {
+        const iconMap = {
+            'low': 'info-circle',
+            'medium': 'exclamation-triangle',
+            'high': 'exclamation-triangle-fill',
+            'critical': 'exclamation-octagon-fill'
+        };
+        return iconMap[level] || 'info-circle';
+    }
+
+    getAlertLevelText(level) {
+        const textMap = {
+            'low': '低级',
+            'medium': '中级',
+            'high': '高级',
+            'critical': '严重'
+        };
+        return textMap[level] || '未知';
+    }
+
+    async showAlertNews(alertId) {
+        try {
+            console.log(`🔍 查看预警 ${alertId} 的相关新闻`);
+
+            // 显示加载状态
+            const modal = new bootstrap.Modal(document.getElementById('alertNewsModal'));
+            document.getElementById('alertNewsModalLabel').textContent = '正在加载...';
+            document.getElementById('alertNewsContent').innerHTML = `
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2">正在加载相关新闻...</p>
+                </div>
+            `;
+            modal.show();
+
+            // 获取预警相关新闻
+            const response = await fetch(`/api/alerts/${alertId}/news`);
+            const result = await response.json();
+
+            if (result.success) {
+                const alert = result.alert;
+                const news = result.news;
+
+                // 更新模态框标题
+                document.getElementById('alertNewsModalLabel').textContent =
+                    `预警相关新闻 - ${alert.title}`;
+
+                // 显示新闻列表
+                this.displayAlertNews(alert, news);
+
+                console.log(`✅ 成功加载 ${news.length} 条相关新闻`);
+            } else {
+                throw new Error(result.message || '获取相关新闻失败');
+            }
+
+        } catch (error) {
+            console.error('获取预警相关新闻失败:', error);
+            document.getElementById('alertNewsContent').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    获取相关新闻失败: ${error.message}
+                </div>
+            `;
+        }
+    }
+
+    displayAlertNews(alert, newsList) {
+        const container = document.getElementById('alertNewsContent');
+
+        if (newsList.length === 0) {
+            container.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    暂无相关新闻
+                </div>
+            `;
+            return;
+        }
+
+        const alertInfo = `
+            <div class="alert alert-${this.getAlertBootstrapLevel(alert.level)} mb-3">
+                <h6 class="alert-heading">
+                    <i class="bi bi-${this.getAlertIcon(alert.level)}"></i>
+                    ${alert.title}
+                </h6>
+                <p class="mb-1">${alert.message}</p>
+                <small class="text-muted">
+                    触发时间: ${new Date(alert.triggered_at).toLocaleString('zh-CN')}
+                </small>
+            </div>
+        `;
+
+        const newsHtml = newsList.map(news => `
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h6 class="card-title">
+                        <a href="${news.url || '#'}" target="_blank" class="text-decoration-none">
+                            ${news.title}
+                        </a>
+                    </h6>
+                    <p class="card-text text-muted small mb-2">${news.content || news.description || '暂无内容'}</p>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">
+                            <i class="bi bi-building"></i> ${news.source_name || '未知来源'}
+                            <i class="bi bi-clock ms-2"></i> ${news.pubDate || '未知时间'}
+                        </small>
+                        <div>
+                            ${news.sentiment ? `<span class="badge bg-${this.getSentimentColor(news.sentiment)}">${this.getSentimentText(news.sentiment)}</span>` : ''}
+                            ${news.category ? `<span class="badge bg-secondary ms-1">${news.category}</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        container.innerHTML = alertInfo + `
+            <h6 class="mb-3">
+                <i class="bi bi-newspaper"></i>
+                相关新闻 (${newsList.length} 条)
+            </h6>
+            ${newsHtml}
+        `;
+    }
+
+    getSentimentColor(sentiment) {
+        const colorMap = {
+            'positive': 'success',
+            'negative': 'danger',
+            'neutral': 'secondary'
+        };
+        return colorMap[sentiment] || 'secondary';
+    }
+
+    getSentimentText(sentiment) {
+        const textMap = {
+            'positive': '正面',
+            'negative': '负面',
+            'neutral': '中性'
+        };
+        return textMap[sentiment] || '未知';
+    }
+
+    updateAlertsStats(alerts) {
+        const activeAlerts = alerts.filter(alert => alert.status === 'active');
+        const today = new Date().toDateString();
+        const todayAlerts = alerts.filter(alert =>
+            new Date(alert.triggered_at).toDateString() === today
+        );
+
+        document.getElementById('active-alerts-count').textContent = activeAlerts.length;
+        document.getElementById('today-alerts-count').textContent = todayAlerts.length;
+        document.getElementById('alerts-updated').textContent = new Date().toLocaleString('zh-CN');
+    }
+
+    async resolveAlert(alertId) {
+        try {
+            const response = await fetch(`/api/alerts/${alertId}/action`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ action: 'resolve' })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                this.showSuccess('预警已解决');
+                await this.loadAlerts(); // 重新加载预警列表
+            } else {
+                this.showError('解决预警失败');
+            }
+
+        } catch (error) {
+            console.error('解决预警失败:', error);
+            this.showError('解决预警失败');
+        }
+    }
+
+    async loadAlertRules() {
+        console.log('📋 [步骤1] 开始加载预警规则...');
+
+        try {
+            const response = await fetch('/api/alert-rules');
+            const result = await response.json();
+
+            if (result.success) {
+                this.displayAlertRules(result.rules);
+                document.getElementById('alert-rules-count').textContent = result.rules.length;
+                console.log(`✅ [步骤1] 预警规则加载完成: ${result.rules.length}个规则`);
+            } else {
+                this.showError('加载预警规则失败');
+            }
+
+        } catch (error) {
+            console.error('加载预警规则失败:', error);
+            this.showError('加载预警规则失败');
+        }
+    }
+
+    displayAlertRules(rules) {
+        const container = document.getElementById('alert-rules-list');
+
+        if (rules.length === 0) {
+            container.innerHTML = '<p class="text-muted small text-center">暂无预警规则</p>';
+            return;
+        }
+
+        container.innerHTML = rules.map(rule => `
+            <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded">
+                <div class="flex-grow-1">
+                    <div class="small fw-bold">${rule.name}</div>
+                    <div class="text-muted small">${rule.description || '无描述'}</div>
+                    <div class="small">
+                        <span class="badge bg-${this.getAlertBootstrapLevel(rule.level)}">${this.getAlertLevelText(rule.level)}</span>
+                        <span class="badge bg-secondary ms-1">${this.getAlertTypeText(rule.alert_type)}</span>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center">
+                    <div class="form-check form-switch me-2">
+                        <input class="form-check-input" type="checkbox" ${rule.enabled ? 'checked' : ''}
+                               onchange="monitor.toggleAlertRule('${rule.id}', this.checked)">
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger" onclick="monitor.deleteAlertRule('${rule.id}')" title="删除预警规则" aria-label="删除预警规则">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    getAlertTypeText(type) {
+        const textMap = {
+            'keyword': '关键词',
+            'sentiment': '情感',
+            'volume': '数据量',
+            'source': '数据源'
+        };
+        return textMap[type] || '未知';
+    }
+
+    showAddAlertRuleModal() {
+        const modal = new bootstrap.Modal(document.getElementById('addAlertRuleModal'));
+        modal.show();
+        this.resetAlertRuleForm();
+    }
+
+    resetAlertRuleForm() {
+        document.getElementById('add-alert-rule-form').reset();
+        document.getElementById('alert-rule-type').value = 'keyword';
+        document.getElementById('alert-rule-level').value = 'medium';
+        document.getElementById('alert-rule-enabled').checked = true;
+        this.onAlertRuleTypeChange();
+    }
+
+    onAlertRuleTypeChange() {
+        const ruleType = document.getElementById('alert-rule-type').value;
+        const keywordConfig = document.getElementById('keyword-alert-config');
+        const otherConfig = document.getElementById('other-alert-config');
+
+        if (ruleType === 'keyword') {
+            keywordConfig.style.display = 'block';
+            otherConfig.style.display = 'none';
+        } else {
+            keywordConfig.style.display = 'none';
+            otherConfig.style.display = 'block';
+        }
+    }
+
+    async saveAlertRule() {
+        try {
+            const name = document.getElementById('alert-rule-name').value.trim();
+            const description = document.getElementById('alert-rule-description').value.trim();
+            const alertType = document.getElementById('alert-rule-type').value;
+            const level = document.getElementById('alert-rule-level').value;
+            const enabled = document.getElementById('alert-rule-enabled').checked;
+
+            if (!name) {
+                this.showError('请输入规则名称');
+                return;
+            }
+
+            let conditions = {};
+
+            if (alertType === 'keyword') {
+                const keywords = document.getElementById('alert-keywords').value
+                    .split(',')
+                    .map(k => k.trim())
+                    .filter(k => k.length > 0);
+                const threshold = parseInt(document.getElementById('alert-threshold').value);
+                const timeWindow = parseInt(document.getElementById('alert-time-window').value);
+
+                if (keywords.length === 0) {
+                    this.showError('请输入至少一个关键词');
+                    return;
+                }
+
+                conditions = {
+                    keywords: keywords,
+                    threshold: threshold,
+                    time_window: timeWindow
+                };
+            }
+
+            const ruleData = {
+                name: name,
+                description: description,
+                alert_type: alertType,
+                level: level,
+                enabled: enabled,
+                conditions: conditions
+            };
+
+            const response = await fetch('/api/alert-rules', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(ruleData)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // 关闭模态框
+                const modal = bootstrap.Modal.getInstance(document.getElementById('addAlertRuleModal'));
+                modal.hide();
+
+                // 重新加载规则列表
+                await this.loadAlertRules();
+
+                this.showSuccess('预警规则创建成功');
+            } else {
+                this.showError(result.detail || '创建预警规则失败');
+            }
+
+        } catch (error) {
+            console.error('创建预警规则失败:', error);
+            this.showError('创建预警规则失败');
+        }
+    }
+
+    async toggleAlertRule(ruleId, enabled) {
+        try {
+            // 这里需要先获取规则详情，然后更新
+            // 为了简化，我们暂时显示提示
+            this.showWarning('预警规则状态切换功能正在开发中...');
+
+        } catch (error) {
+            console.error('切换预警规则状态失败:', error);
+            this.showError('切换预警规则状态失败');
+        }
+    }
+
+    async deleteAlertRule(ruleId) {
+        if (confirm('确定要删除这个预警规则吗？')) {
+            try {
+                const response = await fetch(`/api/alert-rules/${ruleId}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    await this.loadAlertRules();
+                    this.showSuccess('预警规则删除成功');
+                } else {
+                    this.showError('删除预警规则失败');
+                }
+
+            } catch (error) {
+                console.error('删除预警规则失败:', error);
+                this.showError('删除预警规则失败');
+            }
+        }
+    }
+
+    // ==================== 加载状态管理 ====================
+
+    showAlertsLoading(show, message = '正在加载...') {
+        const loadingEl = document.getElementById('alerts-loading');
+        const contentEl = document.getElementById('alerts-content');
+
+        if (loadingEl && contentEl) {
+            if (show) {
+                loadingEl.style.display = 'block';
+                contentEl.style.display = 'none';
+                this.updateLoadingStatus(message);
+                console.log('🔄 显示加载状态:', message);
+            } else {
+                loadingEl.style.display = 'none';
+                contentEl.style.display = 'block';
+                console.log('✅ 隐藏加载状态，显示内容');
+
+                // 检查容器状态
+                const alertsList = document.getElementById('alerts-list');
+                const alertRulesList = document.getElementById('alert-rules-list');
+                console.log('📊 容器状态检查:', {
+                    contentVisible: contentEl.style.display !== 'none',
+                    alertsListExists: !!alertsList,
+                    alertRulesListExists: !!alertRulesList,
+                    alertsListContent: alertsList ? alertsList.innerHTML.length : 0,
+                    alertRulesListContent: alertRulesList ? alertRulesList.innerHTML.length : 0
+                });
+            }
+        } else {
+            console.warn('⚠️ 找不到加载状态元素:', { loadingEl: !!loadingEl, contentEl: !!contentEl });
+        }
+    }
+
+    updateLoadingStatus(message) {
+        const statusEl = document.getElementById('loading-status');
+        if (statusEl) {
+            statusEl.textContent = message;
+        }
     }
 }
 

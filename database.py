@@ -309,6 +309,129 @@ class DatabaseManager:
                 logger.error(f"获取备用数据量也失败: {backup_error}")
                 return 0
 
+    async def get_data_for_trending_analysis(self,
+                                           days: int = 7,
+                                           limit: int = 1000) -> List[Dict[str, Any]]:
+        """获取用于热门关键词分析的数据"""
+        try:
+            # 计算时间范围
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+
+            # 获取多个集合的数据
+            all_data = []
+
+            # 获取指定天数内的所有集合
+            for i in range(days):
+                date = (end_date - timedelta(days=i)).strftime("%Y%m%d")
+                collection_name = f"sentiment_data_{date}"
+
+                try:
+                    collection = self.database[collection_name]
+
+                    # 查询该天的数据
+                    cursor = collection.find({
+                        "created_at": {
+                            "$gte": start_date,
+                            "$lte": end_date
+                        }
+                    }).sort("created_at", DESCENDING).limit(limit // days)
+
+                    daily_data = await cursor.to_list(length=limit // days)
+
+                    # 转换ObjectId为字符串
+                    for item in daily_data:
+                        item["_id"] = str(item["_id"])
+
+                    all_data.extend(daily_data)
+
+                except Exception as e:
+                    logger.debug(f"集合 {collection_name} 不存在或查询失败: {e}")
+                    continue
+
+            # 按时间排序并限制总数量
+            all_data.sort(key=lambda x: x.get('created_at', datetime.min), reverse=True)
+            return all_data[:limit]
+
+        except Exception as e:
+            logger.error(f"获取热门分析数据失败: {e}")
+            return []
+
+    async def get_data_for_alert_analysis(self,
+                                        time_window: int = 60) -> List[Dict[str, Any]]:
+        """获取用于预警分析的数据"""
+        try:
+            # 计算时间窗口
+            current_time = datetime.now()
+            start_time = current_time - timedelta(minutes=time_window)
+
+            # 获取今天的集合
+            collection = await self.get_today_collection()
+
+            # 查询时间窗口内的数据
+            cursor = collection.find({
+                "created_at": {
+                    "$gte": start_time,
+                    "$lte": current_time
+                }
+            }).sort("created_at", DESCENDING)
+
+            data = await cursor.to_list(length=None)
+
+            # 转换ObjectId为字符串
+            for item in data:
+                item["_id"] = str(item["_id"])
+
+            logger.info(f"获取预警分析数据: {len(data)} 条，时间窗口: {time_window} 分钟")
+            return data
+
+        except Exception as e:
+            logger.error(f"获取预警分析数据失败: {e}")
+            return []
+
+    async def get_historical_keyword_data(self,
+                                        keyword: str,
+                                        days: int = 30) -> List[Dict[str, Any]]:
+        """获取关键词的历史数据（用于趋势分析）"""
+        try:
+            all_data = []
+            end_date = datetime.now()
+
+            # 获取指定天数内的数据
+            for i in range(days):
+                date = (end_date - timedelta(days=i)).strftime("%Y%m%d")
+                collection_name = f"sentiment_data_{date}"
+
+                try:
+                    collection = self.database[collection_name]
+
+                    # 搜索包含关键词的数据
+                    cursor = collection.find({
+                        "$or": [
+                            {"title": {"$regex": keyword, "$options": "i"}},
+                            {"content": {"$regex": keyword, "$options": "i"}}
+                        ]
+                    })
+
+                    daily_data = await cursor.to_list(length=None)
+
+                    # 添加日期标记
+                    for item in daily_data:
+                        item["_id"] = str(item["_id"])
+                        item["analysis_date"] = date
+
+                    all_data.extend(daily_data)
+
+                except Exception as e:
+                    logger.debug(f"集合 {collection_name} 查询关键词失败: {e}")
+                    continue
+
+            return all_data
+
+        except Exception as e:
+            logger.error(f"获取关键词历史数据失败: {e}")
+            return []
+
 
 
 # 创建全局数据库管理器实例

@@ -14,6 +14,7 @@ from config import settings, DATA_SOURCES, get_all_source_ids
 from database import db_manager
 from collector import DataCollector
 from scheduler import task_scheduler
+from alert_system import get_alert_system, AlertRule, AlertType, AlertLevel
 
 
 # Pydantic模型
@@ -28,6 +29,19 @@ class DataQuery(BaseModel):
 
 class CollectionRequest(BaseModel):
     source_ids: Optional[List[str]] = None
+
+
+class AlertRuleRequest(BaseModel):
+    name: str
+    description: str
+    alert_type: str
+    level: str
+    enabled: bool = True
+    conditions: Dict[str, Any]
+
+
+class AlertActionRequest(BaseModel):
+    action: str  # resolve, suppress
     priority: Optional[int] = None
 
 
@@ -63,13 +77,17 @@ async def get_database():
 async def startup_event():
     """应用启动时的初始化"""
     logger.info("启动舆情监控平台API服务")
-    
+
     # 连接数据库
     await db_manager.connect()
-    
+
     # 启动调度器
     await task_scheduler.start()
-    
+
+    # 初始化预警系统
+    from alert_system import init_alert_system
+    await init_alert_system(db_manager)
+
     logger.info("API服务启动完成")
 
 
@@ -341,85 +359,258 @@ async def search_data(
 async def get_keywords(
     days: int = Query(7, ge=1, le=365, description="统计天数"),
     limit: int = Query(50, ge=1, le=200, description="返回数量"),
+    enable_weights: bool = Query(True, description="是否启用权重计算"),
     db: Any = Depends(get_database)
 ):
-    """获取热门关键词"""
+    """获取热门关键词（优化版）"""
     try:
-        from datetime import datetime, timedelta
-        import re
-        from collections import Counter
+        from keyword_engine import keyword_engine
+        from datetime import datetime
 
-        # 计算时间范围
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
-
-        # 从数据库获取数据
-        data = await db.find_data(
-            start_date=start_date,
-            end_date=end_date,
-            limit=1000  # 获取更多数据用于关键词分析
-        )
+        # 获取用于热门分析的数据
+        data = await db.get_data_for_trending_analysis(days=days, limit=2000)
 
         if not data:
             # 如果没有数据，返回模拟数据
             mock_keywords = [
-                {"word": "人工智能", "count": 156, "trend": "up"},
-                {"word": "区块链", "count": 143, "trend": "down"},
-                {"word": "新能源", "count": 132, "trend": "up"},
-                {"word": "股市", "count": 124, "trend": "stable"},
-                {"word": "经济", "count": 117, "trend": "up"},
-                {"word": "科技", "count": 103, "trend": "up"},
-                {"word": "创新", "count": 96, "trend": "stable"},
-                {"word": "投资", "count": 88, "trend": "down"},
-                {"word": "数字化", "count": 77, "trend": "up"},
-                {"word": "云计算", "count": 64, "trend": "up"}
+                {"word": "人工智能", "count": 156, "trend": "up", "score": 187.2, "category": "technology"},
+                {"word": "区块链", "count": 143, "trend": "down", "score": 128.7, "category": "technology"},
+                {"word": "新能源", "count": 132, "trend": "up", "score": 158.4, "category": "technology"},
+                {"word": "股市", "count": 124, "trend": "stable", "score": 124.0, "category": "finance"},
+                {"word": "经济", "count": 117, "trend": "up", "score": 140.4, "category": "finance"},
+                {"word": "科技", "count": 103, "trend": "up", "score": 123.6, "category": "technology"},
+                {"word": "创新", "count": 96, "trend": "stable", "score": 96.0, "category": "technology"},
+                {"word": "投资", "count": 88, "trend": "down", "score": 70.4, "category": "finance"},
+                {"word": "数字化", "count": 77, "trend": "up", "score": 92.4, "category": "technology"},
+                {"word": "云计算", "count": 64, "trend": "up", "score": 76.8, "category": "technology"}
             ]
 
             return {
+                "success": True,
                 "keywords": mock_keywords[:limit],
                 "total_words": sum(k["count"] for k in mock_keywords),
                 "unique_words": len(mock_keywords),
                 "days": days,
                 "updated_at": datetime.now().isoformat(),
-                "data_source": "mock"
+                "data_source": "mock",
+                "analyzed_items": 0
             }
 
-        # 提取关键词
-        all_text = ""
-        for item in data:
-            title = item.get("title", "")
-            content = item.get("content", "")
-            all_text += f" {title} {content}"
-
-        # 简单的中文关键词提取
-        keywords = extract_chinese_keywords(all_text)
+        # 使用新的关键词分析引擎
+        result = await keyword_engine.extract_trending_keywords(
+            data=data,
+            limit=limit,
+            time_weight=enable_weights,
+            source_weight=enable_weights
+        )
 
         # 转换为API格式
         keyword_list = []
-        for word, count in keywords.most_common(limit):
+        for keyword_result in result.keywords:
             keyword_list.append({
-                "word": word,
-                "count": count,
-                "trend": "stable"  # 简化处理，实际可以比较历史数据
+                "word": keyword_result.word,
+                "count": keyword_result.count,
+                "trend": keyword_result.trend,
+                "score": round(keyword_result.score, 2),
+                "category": keyword_result.category,
+                "sentiment": keyword_result.sentiment,
+                "sources": keyword_result.sources[:3]  # 只显示前3个来源
             })
 
         return {
+            "success": True,
             "keywords": keyword_list,
-            "total_words": sum(count for _, count in keywords.items()),
-            "unique_words": len(keywords),
+            "total_words": result.total_words,
+            "unique_words": result.unique_words,
             "days": days,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": result.updated_at,
             "data_source": "real",
-            "analyzed_items": len(data)
+            "analyzed_items": result.analyzed_items,
+            "weights_enabled": enable_weights
         }
 
     except Exception as e:
-        logger.error(f"获取关键词失败: {e}")
+        logger.error(f"获取热门关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/keywords/trending")
+async def get_trending_keywords(
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    limit: int = Query(20, ge=1, le=100, description="返回数量"),
+    category: Optional[str] = Query(None, description="分类筛选"),
+    db: Any = Depends(get_database)
+):
+    """获取趋势关键词分析"""
+    try:
+        from keyword_engine import keyword_engine
+        from datetime import datetime
+
+        # 获取历史数据进行趋势分析
+        data = await db.get_data_for_trending_analysis(days=days, limit=3000)
+
+        if not data:
+            return {
+                "success": True,
+                "trending_keywords": [],
+                "analysis": {
+                    "total_analyzed": 0,
+                    "time_range": f"{days}d",
+                    "category_filter": category
+                },
+                "updated_at": datetime.now().isoformat()
+            }
+
+        # 使用关键词分析引擎
+        result = await keyword_engine.extract_trending_keywords(
+            data=data,
+            limit=limit * 2,  # 获取更多数据用于趋势分析
+            time_weight=True,
+            source_weight=True
+        )
+
+        # 筛选和分析趋势
+        trending_keywords = []
+        for keyword_result in result.keywords:
+            # 分类筛选
+            if category and keyword_result.category != category:
+                continue
+
+            # 计算趋势强度
+            trend_strength = 0
+            if keyword_result.trend == "up":
+                trend_strength = min(100, (keyword_result.score / keyword_result.count - 1) * 100)
+            elif keyword_result.trend == "down":
+                trend_strength = max(-100, (keyword_result.score / keyword_result.count - 1) * 100)
+
+            trending_keywords.append({
+                "word": keyword_result.word,
+                "count": keyword_result.count,
+                "score": round(keyword_result.score, 2),
+                "trend": keyword_result.trend,
+                "trend_strength": round(trend_strength, 1),
+                "category": keyword_result.category,
+                "sentiment": keyword_result.sentiment,
+                "sources": keyword_result.sources[:5]
+            })
+
+        # 按趋势强度排序
+        trending_keywords.sort(key=lambda x: abs(x["trend_strength"]), reverse=True)
+        trending_keywords = trending_keywords[:limit]
+
+        return {
+            "success": True,
+            "trending_keywords": trending_keywords,
+            "analysis": {
+                "total_analyzed": result.analyzed_items,
+                "time_range": f"{days}d",
+                "category_filter": category,
+                "total_words": result.total_words,
+                "unique_words": result.unique_words
+            },
+            "updated_at": result.updated_at
+        }
+
+    except Exception as e:
+        logger.error(f"获取趋势关键词失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/keywords/{keyword}/history")
+async def get_keyword_history(
+    keyword: str,
+    days: int = Query(30, ge=1, le=90, description="历史天数"),
+    db: Any = Depends(get_database)
+):
+    """获取关键词历史趋势"""
+    try:
+        from datetime import datetime, timedelta
+
+        # 获取关键词历史数据
+        historical_data = await db.get_historical_keyword_data(keyword=keyword, days=days)
+
+        if not historical_data:
+            return {
+                "success": True,
+                "keyword": keyword,
+                "history": [],
+                "summary": {
+                    "total_mentions": 0,
+                    "avg_daily_mentions": 0,
+                    "peak_day": None,
+                    "trend": "stable"
+                }
+            }
+
+        # 按日期分组统计
+        daily_stats = {}
+        total_mentions = 0
+
+        for item in historical_data:
+            date = item.get('analysis_date', datetime.now().strftime('%Y%m%d'))
+            if date not in daily_stats:
+                daily_stats[date] = {
+                    "date": date,
+                    "count": 0,
+                    "sources": set(),
+                    "categories": set()
+                }
+
+            daily_stats[date]["count"] += 1
+            daily_stats[date]["sources"].add(item.get('source_name', '未知'))
+            daily_stats[date]["categories"].add(item.get('category', '未知'))
+            total_mentions += 1
+
+        # 转换为列表并排序
+        history = []
+        for date, stats in daily_stats.items():
+            history.append({
+                "date": date,
+                "count": stats["count"],
+                "sources": list(stats["sources"]),
+                "categories": list(stats["categories"])
+            })
+
+        history.sort(key=lambda x: x["date"])
+
+        # 计算摘要统计
+        avg_daily = total_mentions / max(1, len(daily_stats))
+        peak_day = max(history, key=lambda x: x["count"]) if history else None
+
+        # 简单趋势计算
+        if len(history) >= 2:
+            recent_avg = sum(h["count"] for h in history[-3:]) / min(3, len(history))
+            early_avg = sum(h["count"] for h in history[:3]) / min(3, len(history))
+
+            if recent_avg > early_avg * 1.2:
+                trend = "up"
+            elif recent_avg < early_avg * 0.8:
+                trend = "down"
+            else:
+                trend = "stable"
+        else:
+            trend = "stable"
+
+        return {
+            "success": True,
+            "keyword": keyword,
+            "history": history,
+            "summary": {
+                "total_mentions": total_mentions,
+                "avg_daily_mentions": round(avg_daily, 1),
+                "peak_day": peak_day,
+                "trend": trend,
+                "analysis_period": f"{days}d"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"获取关键词历史失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 def extract_chinese_keywords(text: str):
-    """提取中文关键词"""
+    """提取中文关键词（保留兼容性）"""
     import re
     from collections import Counter
 
@@ -530,6 +721,263 @@ async def get_system_status():
             "collector": {"status": "online"},
             "timestamp": datetime.now().isoformat()
         }
+
+
+# ==================== 预警系统API ====================
+
+@app.get("/api/alerts")
+async def get_alerts(
+    status: Optional[str] = Query(None, description="预警状态: active, resolved, suppressed"),
+    limit: int = Query(100, description="返回数量限制")
+):
+    """获取预警列表"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        alerts = await alert_system.get_alerts(status=status, limit=limit)
+
+        return {
+            "success": True,
+            "alerts": alerts,
+            "total": len(alerts)
+        }
+
+    except Exception as e:
+        logger.error(f"获取预警列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alert-rules")
+async def get_alert_rules():
+    """获取预警规则列表"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        rules = await alert_system.get_rules()
+
+        return {
+            "success": True,
+            "rules": rules,
+            "total": len(rules)
+        }
+
+    except Exception as e:
+        logger.error(f"获取预警规则列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alerts/{alert_id}/news")
+async def get_alert_related_news(
+    alert_id: str,
+    limit: int = Query(20, description="返回新闻数量限制")
+):
+    """获取预警相关的新闻"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        # 获取预警详情
+        alert = await alert_system.get_alert_by_id(alert_id)
+        if not alert:
+            raise HTTPException(status_code=404, detail="预警不存在")
+
+        # 根据预警类型获取相关新闻
+        news_list = []
+
+        if alert.get('alert_type') == 'keyword':
+            # 关键词预警：搜索包含该关键词的新闻
+            keyword = alert.get('data', {}).get('keyword', '')
+            if keyword:
+                # 使用现有的搜索接口
+                news_list, total = await db_manager.search_data(
+                    keyword=keyword,
+                    skip=0,
+                    limit=limit
+                )
+
+        elif alert.get('alert_type') == 'sentiment':
+            # 情感预警：获取相关情感的新闻
+            sentiment = alert.get('data', {}).get('sentiment', '')
+            category = alert.get('data', {}).get('category', '')
+
+            # 构建查询条件
+            query = {}
+            if sentiment:
+                query['sentiment'] = sentiment
+            if category:
+                query['category'] = category
+
+            # 获取最近的相关新闻
+            collection = db_manager.get_today_collection()
+            cursor = collection.find(query).sort("timestamp", -1).limit(limit)
+            news_list = await cursor.to_list(length=limit)
+
+            # 转换ObjectId为字符串
+            for news in news_list:
+                if '_id' in news:
+                    news['_id'] = str(news['_id'])
+
+        elif alert.get('alert_type') == 'volume':
+            # 数据量预警：获取最近的新闻
+            collection = db_manager.get_today_collection()
+            cursor = collection.find().sort("timestamp", -1).limit(limit)
+            news_list = await cursor.to_list(length=limit)
+
+            # 转换ObjectId为字符串
+            for news in news_list:
+                if '_id' in news:
+                    news['_id'] = str(news['_id'])
+
+        return {
+            "success": True,
+            "alert": alert,
+            "news": news_list,
+            "total": len(news_list)
+        }
+
+    except Exception as e:
+        logger.error(f"获取预警相关新闻失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/alert-rules")
+async def create_alert_rule(rule_request: AlertRuleRequest):
+    """创建预警规则"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        # 生成规则ID
+        rule_id = f"rule_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+        # 创建规则对象
+        rule = AlertRule(
+            id=rule_id,
+            name=rule_request.name,
+            description=rule_request.description,
+            alert_type=AlertType(rule_request.alert_type),
+            level=AlertLevel(rule_request.level),
+            enabled=rule_request.enabled,
+            conditions=rule_request.conditions,
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+
+        success = await alert_system.add_rule(rule)
+
+        if success:
+            return {
+                "success": True,
+                "message": "预警规则创建成功",
+                "rule_id": rule_id
+            }
+        else:
+            raise HTTPException(status_code=500, detail="创建预警规则失败")
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"参数错误: {e}")
+    except Exception as e:
+        logger.error(f"创建预警规则失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/alert-rules/{rule_id}")
+async def update_alert_rule(rule_id: str, rule_request: AlertRuleRequest):
+    """更新预警规则"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        # 检查规则是否存在
+        if rule_id not in alert_system.rules:
+            raise HTTPException(status_code=404, detail="预警规则不存在")
+
+        # 更新规则对象
+        existing_rule = alert_system.rules[rule_id]
+        rule = AlertRule(
+            id=rule_id,
+            name=rule_request.name,
+            description=rule_request.description,
+            alert_type=AlertType(rule_request.alert_type),
+            level=AlertLevel(rule_request.level),
+            enabled=rule_request.enabled,
+            conditions=rule_request.conditions,
+            created_at=existing_rule.created_at,
+            updated_at=datetime.now()
+        )
+
+        success = await alert_system.update_rule(rule)
+
+        if success:
+            return {
+                "success": True,
+                "message": "预警规则更新成功"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="更新预警规则失败")
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"参数错误: {e}")
+    except Exception as e:
+        logger.error(f"更新预警规则失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/alert-rules/{rule_id}")
+async def delete_alert_rule(rule_id: str):
+    """删除预警规则"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        success = await alert_system.delete_rule(rule_id)
+
+        if success:
+            return {
+                "success": True,
+                "message": "预警规则删除成功"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="删除预警规则失败")
+
+    except Exception as e:
+        logger.error(f"删除预警规则失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/alerts/{alert_id}/action")
+async def alert_action(alert_id: str, action_request: AlertActionRequest):
+    """预警操作（解决、抑制等）"""
+    try:
+        alert_system = get_alert_system()
+        if not alert_system:
+            raise HTTPException(status_code=500, detail="预警系统未初始化")
+
+        if action_request.action == "resolve":
+            success = await alert_system.resolve_alert(alert_id)
+            message = "预警已解决"
+        else:
+            raise HTTPException(status_code=400, detail="不支持的操作")
+
+        if success:
+            return {
+                "success": True,
+                "message": message
+            }
+        else:
+            raise HTTPException(status_code=500, detail="操作失败")
+
+    except Exception as e:
+        logger.error(f"预警操作失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

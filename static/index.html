@@ -222,7 +222,11 @@
                             <i class="bi bi-tags"></i> 关键词分析
                         </button>
                     </li>
-
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="alerts-tab" data-bs-toggle="tab" data-bs-target="#alerts" type="button" role="tab">
+                            <i class="bi bi-exclamation-triangle"></i> 预警管理
+                        </button>
+                    </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link" id="charts-tab" data-bs-toggle="tab" data-bs-target="#charts" type="button" role="tab">
                             <i class="bi bi-graph-up"></i> 数据可视化
@@ -299,7 +303,7 @@
                                     <i class="bi bi-newspaper"></i>
                                     新闻中心
                                 </h5>
-                                <button class="btn btn-sm btn-outline-primary" onclick="monitor.refreshOverview()">
+                                <button class="btn btn-sm btn-outline-primary" onclick="monitor.refreshOverview()" title="刷新概览" aria-label="刷新概览">
                                     <i class="bi bi-arrow-clockwise"></i>
                                 </button>
                             </div>
@@ -414,7 +418,7 @@
                                             <i class="bi bi-funnel"></i>
                                             清洗规则管理
                                         </h6>
-                                        <button class="btn btn-sm btn-primary" onclick="monitor.showAddRuleModal()">
+                                        <button class="btn btn-sm btn-primary" onclick="monitor.showAddRuleModal()" title="添加清洗规则" aria-label="添加清洗规则">
                                             <i class="bi bi-plus"></i>
                                         </button>
                                     </div>
@@ -447,7 +451,90 @@
                         </div>
                     </div>
 
+                    <!-- 预警管理标签页 -->
+                    <div class="tab-pane fade" id="alerts" role="tabpanel">
+                        <!-- 加载状态指示器 -->
+                        <div id="alerts-loading" class="text-center py-4" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted" id="loading-status">正在加载预警管理...</small>
+                            </div>
+                        </div>
 
+                        <div class="row" id="alerts-content">
+                            <!-- 预警列表 -->
+                            <div class="col-md-8">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0">
+                                            <i class="bi bi-exclamation-triangle"></i>
+                                            预警列表
+                                        </h5>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadAlerts('active')">活跃</button>
+                                            <button class="btn btn-outline-secondary" onclick="monitor.loadAlerts('resolved')">已解决</button>
+                                            <button class="btn btn-outline-secondary active" onclick="monitor.loadAlerts('')">全部</button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="alerts-list">
+                                            <!-- 动态加载预警列表 -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 预警规则管理 -->
+                            <div class="col-md-4">
+                                <div class="card mb-3">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">
+                                            <i class="bi bi-gear"></i>
+                                            预警规则
+                                        </h6>
+                                        <button class="btn btn-sm btn-primary" onclick="monitor.showAddAlertRuleModal()" title="添加预警规则" aria-label="添加预警规则">
+                                            <i class="bi bi-plus"></i>
+                                        </button>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="alert-rules-list" style="max-height: 300px; overflow-y: auto;">
+                                            <!-- 动态加载预警规则 -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 预警统计 -->
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">
+                                            <i class="bi bi-bar-chart"></i>
+                                            预警统计
+                                        </h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>活跃预警:</span>
+                                            <span class="badge bg-danger" id="active-alerts-count">-</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>今日预警:</span>
+                                            <span class="badge bg-warning" id="today-alerts-count">-</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>预警规则:</span>
+                                            <span class="badge bg-info" id="alert-rules-count">-</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <span>更新时间:</span>
+                                            <span class="small text-muted" id="alerts-updated">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- 数据可视化标签页 -->
                     <div class="tab-pane fade" id="charts" role="tabpanel">
@@ -521,12 +608,12 @@
     </div>
     
     <!-- 详细信息模态框 -->
-    <div class="modal fade" id="detailModal" tabindex="-1">
+    <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">新闻详情</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <h5 class="modal-title" id="detailModalLabel">新闻详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
                 </div>
                 <div class="modal-body" id="modal-content">
                     <!-- 动态内容 -->
@@ -538,15 +625,15 @@
 
 
     <!-- 全部新闻模态框 -->
-    <div class="modal fade" id="allNewsModal" tabindex="-1">
+    <div class="modal fade" id="allNewsModal" tabindex="-1" aria-labelledby="allNewsModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">
+                    <h5 class="modal-title" id="allNewsModalLabel">
                         <i class="bi bi-newspaper"></i>
                         全部新闻
                     </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
                 </div>
                 <div class="modal-body">
                     <!-- 搜索栏 -->
@@ -556,11 +643,12 @@
                                 <span class="input-group-text"><i class="bi bi-search"></i></span>
                                 <input type="text" class="form-control" id="modal-search-input"
                                        placeholder="输入关键词搜索新闻标题、内容..."
+                                       aria-label="搜索新闻"
                                        onkeypress="if(event.key==='Enter') monitor.searchInModal()">
                                 <button class="btn btn-primary" onclick="monitor.searchInModal()">
                                     搜索
                                 </button>
-                                <button class="btn btn-outline-secondary" onclick="monitor.clearSearch()">
+                                <button class="btn btn-outline-secondary" onclick="monitor.clearSearch()" aria-label="清除搜索">
                                     <i class="bi bi-x-lg"></i>
                                 </button>
                             </div>
@@ -595,15 +683,15 @@
     </div>
 
     <!-- 添加清洗规则模态框 -->
-    <div class="modal fade" id="addRuleModal" tabindex="-1">
+    <div class="modal fade" id="addRuleModal" tabindex="-1" aria-labelledby="addRuleModalLabel" aria-hidden="true">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">
+                    <h5 class="modal-title" id="addRuleModalLabel">
                         <i class="bi bi-plus-circle"></i>
                         添加清洗规则
                     </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
                 </div>
                 <div class="modal-body">
                     <form id="add-rule-form">
@@ -652,6 +740,114 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="button" class="btn btn-primary" onclick="monitor.saveFilterRule()">保存规则</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加预警规则模态框 -->
+    <div class="modal fade" id="addAlertRuleModal" tabindex="-1" aria-labelledby="addAlertRuleModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addAlertRuleModalLabel">
+                        <i class="bi bi-plus-circle"></i>
+                        添加预警规则
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="add-alert-rule-form">
+                        <div class="mb-3">
+                            <label class="form-label">规则名称</label>
+                            <input type="text" class="form-control" id="alert-rule-name" placeholder="请输入规则名称" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">规则描述</label>
+                            <textarea class="form-control" id="alert-rule-description" rows="2" placeholder="描述此预警规则的用途"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">预警类型</label>
+                            <select class="form-select" id="alert-rule-type" onchange="monitor.onAlertRuleTypeChange()">
+                                <option value="keyword">关键词预警</option>
+                                <option value="sentiment">情感预警</option>
+                                <option value="volume">数据量预警</option>
+                                <option value="source">数据源预警</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">预警级别</label>
+                            <select class="form-select" id="alert-rule-level">
+                                <option value="low">低级预警</option>
+                                <option value="medium">中级预警</option>
+                                <option value="high">高级预警</option>
+                                <option value="critical">严重预警</option>
+                            </select>
+                        </div>
+
+                        <!-- 关键词预警配置 -->
+                        <div id="keyword-alert-config">
+                            <div class="mb-3">
+                                <label class="form-label">监控关键词</label>
+                                <input type="text" class="form-control" id="alert-keywords" placeholder="请输入关键词，多个用逗号分隔">
+                                <div class="form-text">支持通配符：* 表示任意字符，? 表示单个字符</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">触发阈值</label>
+                                <input type="number" class="form-control" id="alert-threshold" value="10" min="1">
+                                <div class="form-text">当关键词出现次数超过此值时触发预警</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">时间窗口（分钟）</label>
+                                <input type="number" class="form-control" id="alert-time-window" value="60" min="1">
+                                <div class="form-text">在此时间窗口内统计关键词出现次数</div>
+                            </div>
+                        </div>
+
+                        <!-- 其他预警类型配置（暂时隐藏） -->
+                        <div id="other-alert-config" style="display: none;">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i>
+                                其他预警类型的配置功能正在开发中...
+                            </div>
+                        </div>
+
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="alert-rule-enabled" checked>
+                            <label class="form-check-label" for="alert-rule-enabled">
+                                启用此预警规则
+                            </label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="monitor.saveAlertRule()">保存规则</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预警相关新闻模态框 -->
+    <div class="modal fade" id="alertNewsModal" tabindex="-1" aria-labelledby="alertNewsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="alertNewsModalLabel">预警相关新闻</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                    <div id="alertNewsContent">
+                        <!-- 动态加载新闻内容 -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
                 </div>
             </div>
         </div>

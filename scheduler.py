@@ -10,6 +10,7 @@ from loguru import logger
 from config import settings, get_sources_by_priority
 from collector import DataCollector
 from database import db_manager
+from alert_system import get_alert_system
 
 
 class TaskScheduler:
@@ -114,6 +115,16 @@ class TaskScheduler:
             trigger=CronTrigger(hour=8, minute=0),
             id="daily_report",
             name="生成日报",
+            max_instances=1,
+            coalesce=True
+        )
+
+        # 7. 预警检查（每10分钟执行一次）
+        self.scheduler.add_job(
+            self._check_alerts,
+            trigger=IntervalTrigger(minutes=10),
+            id="check_alerts",
+            name="预警检查",
             max_instances=1,
             coalesce=True
         )
@@ -229,6 +240,81 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"执行任务失败 {job_id}: {e}")
             return False
+
+    async def _check_alerts(self):
+        """检查预警（优化版）"""
+        try:
+            logger.info("开始预警检查...")
+
+            alert_system = get_alert_system()
+            if not alert_system:
+                logger.warning("预警系统未初始化，跳过预警检查")
+                return
+
+            # 使用新的关键词分析引擎进行预警检查
+            try:
+                from keyword_engine import keyword_engine
+
+                # 获取预警分析数据（最近60分钟）
+                data = await db_manager.get_data_for_alert_analysis(time_window=60)
+
+                if not data:
+                    logger.info("没有找到预警分析数据，跳过预警检查")
+                    return
+
+                # 获取所有启用的预警规则
+                rules = await alert_system.get_rules()
+                if not rules:
+                    logger.info("没有启用的预警规则，跳过预警检查")
+                    return
+
+                # 为每个关键词预警规则执行检查
+                total_checks = 0
+                for rule in rules:
+                    if rule.get('alert_type') != 'keyword' or not rule.get('enabled'):
+                        continue
+
+                    try:
+                        # 获取规则的目标关键词
+                        conditions = rule.get('conditions', {})
+                        target_keywords = conditions.get('keywords', [])
+                        time_window = conditions.get('time_window', 60)
+
+                        if not target_keywords:
+                            continue
+
+                        # 使用关键词分析引擎进行匹配
+                        alert_result = await keyword_engine.extract_alert_keywords(
+                            data=data,
+                            target_keywords=target_keywords,
+                            time_window=time_window
+                        )
+
+                        # 检查是否触发预警
+                        threshold = conditions.get('threshold', 0)
+                        for matched_keyword in alert_result.matched_keywords:
+                            if matched_keyword['count'] >= threshold:
+                                # 构造预警数据格式（兼容原有接口）
+                                keyword_data = {
+                                    "word": matched_keyword['word'],
+                                    "count": matched_keyword['count']
+                                }
+
+                                # 调用原有的预警检查方法
+                                await alert_system.check_keyword_alerts([keyword_data])
+
+                        total_checks += len(alert_result.matched_keywords)
+
+                    except Exception as e:
+                        logger.error(f"检查预警规则失败 {rule.get('name', 'unknown')}: {e}")
+
+                logger.info(f"预警检查完成，检查了 {total_checks} 个关键词匹配")
+
+            except Exception as e:
+                logger.error(f"获取预警分析数据失败: {e}")
+
+        except Exception as e:
+            logger.error(f"预警检查失败: {e}")
 
 
 # 创建全局调度器实例

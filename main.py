@@ -16,6 +16,7 @@ sys.path.insert(0, str(project_root))
 from config import settings
 from database import db_manager
 from scheduler import task_scheduler
+from alert_system import init_alert_system
 
 
 def setup_logging():
@@ -60,7 +61,11 @@ async def startup():
         # 启动调度器
         logger.info("启动任务调度器...")
         await task_scheduler.start()
-        
+
+        # 初始化预警系统
+        logger.info("初始化预警系统...")
+        await init_alert_system(db_manager)
+
         logger.info("应用启动完成")
         return True
         
